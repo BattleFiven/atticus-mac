@@ -6676,9 +6676,9 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
     // Teams caption lines become transcript lines with the speaker's name; the user's own name becomes "You".
     func captionLines(_ lines: [(String, String)], late: Bool = false) {
         guard running || late else { return }
-        let first = name.split(separator: " ").first.map(String.init)?.lowercased() ?? ""
+        let first = (name.isEmpty ? NSFullUserName() : name).split(separator: " ").first.map(String.init)?.lowercased() ?? ""   // no saved name: the Mac account's
         for (who, text) in lines {
-            let you = !first.isEmpty && who.lowercased().hasPrefix(first)
+            let you = ["tu", "you", "io"].contains(who.lowercased()) || !first.isEmpty && who.lowercased().hasPrefix(first)
             let at = Date().timeIntervalSince1970, seconds = Int(Date().timeIntervalSince(began)); serial += 1
             transcript.append(["at": at, "text": text, "seconds": seconds, "mic": you, "speaker": you ? "You" : who])
             saveEvent(["kind": "transcript", "at": at, "text": text, "seconds": seconds, "mic": you, "speaker": you ? "You" : who])

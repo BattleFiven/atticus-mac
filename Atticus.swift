@@ -238,6 +238,14 @@ func sharingType(hidden: Bool, majorVersion: Int) -> NSWindow.SharingType {
     hidden && majorVersion < 27 ? .none : .readOnly
 }
 
+// The names that mean "me" in meetings: Settings' list, else the saved profile name, else the Mac account's full name.
+func myNames() -> [String] {
+    let saved = (Prefs.d["meetingMe"] as? [String] ?? []).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    if !saved.isEmpty { return saved }
+    let full = profileName(NSString(string: "~/.config/atticus/me.json").expandingTildeInPath)
+    return (full.isEmpty ? NSFullUserName() : full).split(separator: " ").map(String.init)
+}
+
 func profileName(_ path: String) -> String {
     guard let profile = (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path)))) as? [String: Any] else { return "" }
     guard let facts = profile["facts"] as? [[String: Any]] else { return profile["name"] as? String ?? "" }
@@ -5865,7 +5873,10 @@ final class MeetingLibrary: NSObject, WKScriptMessageHandler, NSWindowDelegate {
         guard let b = m.body as? [String: Any], let action = b["do"] as? String else { return }
         let id = b["id"] as? String ?? ""
         switch action {
-        case "ready": list(""); if let o = opening { send("select", o); opening = nil }
+        case "ready": list(""); send("me", myNames()); if let o = opening { send("select", o); opening = nil }
+        case "setMe":
+            let names = (b["names"] as? [String] ?? []).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            Prefs.set("meetingMe", names); send("me", myNames())
         case "list": list(b["query"] as? String ?? "")
         case "get", "resummarize": settings.meetings(["action": action, "id": id]) { [weak self] r in self?.send("meeting", r) }
         case "rename": settings.meetings(["action": "rename", "id": id, "title": b["title"] as? String ?? ""]) { [weak self] r in self?.send("meeting", r); self?.list("") }
@@ -6679,9 +6690,10 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
     // Teams caption lines become transcript lines with the speaker's name; the user's own name becomes "You".
     func captionLines(_ lines: [(String, String)], late: Bool = false) {
         guard running || late else { return }
-        let first = (name.isEmpty ? NSFullUserName() : name).split(separator: " ").first.map(String.init)?.lowercased() ?? ""   // no saved name: the Mac account's
+        let mine = myNames().map { $0.lowercased() }
         for (who, text) in lines {
-            let you = ["tu", "you", "io"].contains(who.lowercased()) || !first.isEmpty && who.lowercased().hasPrefix(first)
+            let words = who.lowercased().split(separator: " ").map(String.init)
+            let you = ["tu", "you", "io"].contains(who.lowercased()) || words.contains { mine.contains($0) } || mine.contains(who.lowercased())
             let at = Date().timeIntervalSince1970, seconds = Int(Date().timeIntervalSince(began)); serial += 1
             transcript.append(["at": at, "text": text, "seconds": seconds, "mic": you, "speaker": you ? "You" : who])
             saveEvent(["kind": "transcript", "at": at, "text": text, "seconds": seconds, "mic": you, "speaker": you ? "You" : who])

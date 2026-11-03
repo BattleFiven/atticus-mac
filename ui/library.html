@@ -160,7 +160,11 @@
   <div id="empty"><svg><use href="#i-wave"/></svg><br>Seleziona una riunione.<br>Quelle registrate con Meeting Copilot compaiono qui.</div>
   <div id="todoview" hidden>
     <h2>Azioni da svolgere</h2>
-    <div id="todofilters" style="display:flex;gap:6px;margin:6px 0 14px"></div>
+    <div id="todofilters" style="display:flex;gap:6px;margin:6px 0 10px"></div>
+    <div id="mebar" class="banner" style="background:var(--hover)" hidden>
+      <span id="metext"></span><button class="pill" id="meedit">Modifica</button>
+      <form id="meform" hidden style="display:flex;gap:6px;flex:1"><label class="search" style="flex:1;background:var(--glass2)"><input id="meinput" placeholder="Nomi separati da virgola, es. Alessandro, Battaglia, Ale" autocomplete="off"></label><button class="pill blue">Salva</button></form>
+    </div>
     <section class="pane" id="todolist"></section>
   </div>
   <div id="detail" hidden>
@@ -223,7 +227,8 @@ function dayLabel(s) {
   if (diff < 7) return d.toLocaleDateString('it-IT', {weekday: 'long'}).replace(/^./, c => c.toUpperCase());
   return d.toLocaleDateString('it-IT', {day: 'numeric', month: 'long', year: d.getFullYear() === t.getFullYear() ? undefined : 'numeric'});
 }
-const me = () => ['io', 'tu', 'alessandro', 'battaglia'];
+let myNames = [];
+const me = () => ['io', 'tu', ...myNames.map(n => n.toLowerCase())];
 const mine = a => me().some(w => new RegExp(`(^|[^\\p{L}])${w}([^\\p{L}]|$)`, 'iu').test(a));
 function paintTodoCount() { const n = actions.reduce((k, m) => k + m.items.filter((_, i) => !m.done.includes(i)).length, 0); $('todocount').textContent = n; $('todocount').hidden = !n }
 function showTodo() {
@@ -234,6 +239,8 @@ function paintTodo() {
   const filters = [['todo', 'Da fare'], ['mine', 'Mie'], ['done', 'Fatte'], ['all', 'Tutte']];
   $('todofilters').innerHTML = filters.map(([k, l]) => `<button class="chip${todoFilter === k ? ' on' : ''}" data-k="${k}">${l}</button>`).join('');
   for (const b of $('todofilters').children) b.onclick = () => { todoFilter = b.dataset.k; paintTodo() };
+  $('mebar').hidden = todoFilter !== 'mine';
+  $('metext').innerHTML = myNames.length ? `Le tue azioni sono quelle che citano <b>${esc(myNames.join(', '))}</b>, “io” o “tu”.` : 'Scrivi come ti chiami per riconoscere le tue azioni.';
   const keep = (m, i) => { const d = m.done.includes(i); return todoFilter === 'all' || (todoFilter === 'done' ? d : !d && (todoFilter !== 'mine' || mine(m.items[i]))) };
   const groups = actions.map(m => ({m, idx: m.items.map((_, i) => i).filter(i => keep(m, i))})).filter(g => g.idx.length);
   $('todolist').innerHTML = groups.length ? groups.map(({m, idx}) => `<div class="card group"><h3 data-id="${esc(m.id)}">${svg('doc')}<span>${esc(m.title)}</span><small>${esc(dayLabel(m.started))}, ${time(m.started)}</small></h3>${idx.map(i => {
@@ -353,6 +360,7 @@ function ask(text) {
 function grow() { $('askq').style.height = 'auto'; $('askq').style.height = Math.min(120, $('askq').scrollHeight) + 'px' }
 window.lib = {
   list(r) { if (r.error) { notice('Non riesco ad aprire le riunioni.'); return } meetings = r.meetings || []; paintList(); if (!current && view === 'meeting' && meetings[0]) open(meetings[0].id); post({do: 'actions'}) },
+  me(names) { myNames = names || []; $('meform').hidden = true; $('metext').hidden = $('meedit').hidden = false; paintTodoCount(); if (view === 'todo') paintTodo() },
   actions(r) { if (r.actions) { actions = r.actions; paintTodoCount(); if (view === 'todo') paintTodo() } },
   meeting(r) {
     if (r.meeting && regenerating === r.meeting.id) { regenerating = null; if (r.meeting.summary_source === 'local') notice('Non sono riuscito a scrivere le minute. Riprova.') }
@@ -380,6 +388,9 @@ $('delete').onclick = () => current && post({do: 'delete', id: current.id});
 $('regen').onclick = $('regen2').onclick = regen;
 $('live').onclick = () => post({do: 'live'});
 $('todorow').onclick = showTodo;
+$('meedit').onclick = () => { $('metext').hidden = $('meedit').hidden = true; $('meform').hidden = false; $('meinput').value = myNames.join(', '); $('meinput').focus() };
+$('meform').onsubmit = e => { e.preventDefault(); post({do: 'setMe', names: $('meinput').value.split(',').map(x => x.trim()).filter(Boolean)}) };
+$('meinput').onkeydown = e => { if (e.key === 'Escape') { e.preventDefault(); lib.me(myNames) } };
 $('settings').onclick = () => post({do: 'settings'});
 $('askform').onsubmit = e => { e.preventDefault(); ask() };
 $('askq').oninput = grow;

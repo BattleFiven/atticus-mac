@@ -14,7 +14,7 @@
 ## Quick install
 
 ```
-curl -fsSL https://raw.githubusercontent.com/SaarthurR/atticus-mac/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/BattleFiven/atticus-mac/fiven/meetings/install.sh | bash
 ```
 
 Needs macOS 26 and an AI client: Claude Code on a Claude plan, Devin, Pi or a local model. [Full install steps](#install)
@@ -179,7 +179,7 @@ You need:
 Paste this in Terminal:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/SaarthurR/atticus-mac/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/BattleFiven/atticus-mac/fiven/meetings/install.sh | bash
 ```
 
 It checks your Mac, downloads Atticus to `~/.atticus`, builds `~/Applications/Atticus.app`, and opens it. Atticus starts at login and updates itself from there (turn that off in Settings → About & Updates).

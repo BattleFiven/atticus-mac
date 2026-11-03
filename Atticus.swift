@@ -195,7 +195,7 @@ enum Prefs {
             ["name": "Friendly", "text": "Warm and conversational, like talking to a colleague. Simple words."]],
         "selection": true, "ahead": true, "aheadDelay": 0.7, "live": true, "screen": "auto", "openOn": "here", "workIn": "back", "miniScreen": true, "draw": true, "guideSteps": "auto", "pageJS": false,
         "speak": true, "showAnswers": "stream", "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
-        "learn": true, "safe": true, "pointer": false, "meeting": true, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": true, "meetingDetect": true, "learnMe": true, "saveChats": true, "stats": true, "tips": true, "support": false, "comeBack": true, "askMe": true, "meetingSummary": true, "input": "voice", "talkMode": "hold", "speechModel": "whisper", "whisperModel": "large", "whisperLanguage": "it", "improve": false, "improveAsked": false, "draftInsert": "ask",
+        "learn": true, "safe": true, "pointer": false, "meeting": true, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": true, "meetingDetect": true, "learnMe": true, "saveChats": true, "stats": true, "tips": true, "support": false, "comeBack": true, "askMe": true, "meetingSummary": true, "input": "voice", "talkMode": "hold", "speechModel": "whisper", "whisperModel": "large", "whisperLanguage": macLanguage(), "improve": false, "improveAsked": false, "draftInsert": "ask",
         "dictateHotkeyCode": -2, "dictateHotkeyMods": 1048576, "dictateHotkeyLabel": "fn", "dictateMode": "cleanup", "dictateHistory": true, "dictateLearn": true, "dictateWords": [], "dictateFixes": [String: String](), "boxW": 500, "boxH": 420]
     static let retiredKeys = ["quietAudio", "quietLevel", "autoCopy", "askMe", "corner", "linger", "soundStart", "soundRelease", "soundDone", "soundStop",
         "instant", "live", "ahead", "aheadDelay", "learn", "selection", "guideSteps", "workIn", "openOn", "miniScreen", "draftInsert",
@@ -236,6 +236,28 @@ func applySharing(_ window: NSWindow) {
 func sharingType(hidden: Bool, majorVersion: Int) -> NSWindow.SharingType {
     // Work around reported macOS 27 blank content with .none; preserve the saved preference.
     hidden && majorVersion < 27 ? .none : .readOnly
+}
+
+// The Mac's language ("it", "en"…), for Whisper and meeting transcription defaults.
+func macLanguage() -> String { Locale.preferredLanguages.first.map { String($0.prefix { $0.isLetter }) } ?? "auto" }
+func meetingLocale() -> Locale {
+    let saved = Prefs.str("meetingLocale")
+    if !saved.isEmpty { return Locale(identifier: saved) }
+    let lang = macLanguage(), region = Locale.current.region?.identifier ?? ""
+    return Locale(identifier: lang == "en" && region.isEmpty ? "en-US" : region.isEmpty ? lang : "\(lang)-\(region)")
+}
+
+// First launch on a new Mac, and every launch after: finish what the installer could not do, in the background.
+// whisper.cpp (Homebrew) and the chosen model; Calendar access for meeting titles and attendees.
+func autoSetup() {
+    if Prefs.str("speechModel") == "whisper" {
+        if Whisper.serverPath() == nil, !Whisper.installing { settings.whisperInstall() }
+        let model = Prefs.str("whisperModel")
+        if !FileManager.default.fileExists(atPath: Whisper.path(Whisper.model(model))) { Whisper.shared.download(Whisper.model(model).id) {} }
+    }
+    if Prefs.bool("meetingNudge"), EKEventStore.authorizationStatus(for: .event) == .notDetermined {
+        EKEventStore().requestFullAccessToEvents { _, _ in }
+    }
 }
 
 // The names that mean "me" in meetings: Settings' list, else the saved profile name, else the Mac account's full name.
@@ -3391,11 +3413,9 @@ final class App: NSObject, WKScriptMessageHandler {
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
             if replying { stopOfferInput() } else { hush() }; js("msg", "Allow Atticus in System Settings → Privacy & Security → Microphone."); hide(after: 6); return
         }
-        let whisper = Prefs.str("speechModel") == "whisper"   // runs on this Mac outside Apple's speech service: no Speech Recognition permission
-        guard !whisper || Whisper.shared.ready else {
-            if replying { stopOfferInput() } else { hush() }; js("msg", "Whisper isn’t set up yet. Open Settings → General to download a model."); hide(after: 6)
-            Atticus.settings.open(tab: "general"); return
-        }
+        // runs on this Mac outside Apple's speech service: no Speech Recognition permission. Until first-run setup has
+        // installed whisper.cpp and its model, Apple's speech listens instead of refusing.
+        let whisper = Prefs.str("speechModel") == "whisper" && Whisper.shared.ready
         guard whisper || dictate || SFSpeechRecognizer.authorizationStatus() == .authorized else {
             if replying { stopOfferInput() } else { hush() }; js("msg", "Allow Atticus in System Settings → Privacy & Security → Speech Recognition."); hide(after: 6); return
         }
@@ -5846,7 +5866,8 @@ final class MeetingLibrary: NSObject, WKScriptMessageHandler, NSWindowDelegate {
         w.titlebarAppearsTransparent = true; w.titleVisibility = .hidden; w.title = "Riunioni"
         w.isReleasedWhenClosed = false; w.delegate = self; w.contentMinSize = NSSize(width: 820, height: 520)
         let bg = NSVisualEffectView(frame: w.contentRect(forFrameRect: w.frame))
-        bg.material = .underWindowBackground; bg.blendingMode = .behindWindow; bg.state = .active
+        bg.material = .hudWindow; bg.blendingMode = .behindWindow; bg.state = .active; bg.appearance = NSAppearance(named: .darkAqua)   // the Meeting Copilot panel's look
+        w.appearance = NSAppearance(named: .darkAqua)
         let cfg = WKWebViewConfiguration()
         cfg.userContentController.add(self, name: "lib")
         let v = WKWebView(frame: bg.bounds, configuration: cfg)
@@ -6420,7 +6441,14 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         if callApp == "Teams", meetingTitle.isEmpty, let t = TeamsCaptions.meetingTitle() { meetingTitle = t }
         if callApp == "Teams" {
             captionTimer?.invalidate()
-            captionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.captions.poll { self?.captionLines($0) } }
+            let since = Date(); var hinted = false
+            captionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                guard let self else { return }
+                captions.poll { self.captionLines($0) }
+                if !hinted, !captions.active, Date().timeIntervalSince(since) > 25 {
+                    hinted = true; js("hint", "Per avere i nomi di chi parla, attiva i sottotitoli in Teams: Impostazioni → Accessibilità → Mostra sempre i sottotitoli.")
+                }
+            }
         }
         beginArchive()
         if archiveEnded { saveEvent(["kind": "resumed", "duration": elapsed]); archiveEnded = false }
@@ -6437,8 +6465,8 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
                 let micAllowed = demo ? true : await AVCaptureDevice.requestAccess(for: .audio)
                 guard running, generation == g, !Task.isCancelled else { return }
                 guard micAllowed else { stop(); js("error", "Allow Microphone access for Atticus in System Settings"); return }
-                let mic = SpeechTranscriber(locale: Locale(identifier: "it-IT"), preset: .progressiveTranscription)
-                let tr = SpeechTranscriber(locale: Locale(identifier: "it-IT"), preset: .progressiveTranscription)
+                let mic = SpeechTranscriber(locale: meetingLocale(), preset: .progressiveTranscription)
+                let tr = SpeechTranscriber(locale: meetingLocale(), preset: .progressiveTranscription)
                 if let request = try await AssetInventory.assetInstallationRequest(supporting: [tr]) { try await request.downloadAndInstall() }
                 guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [tr]) else {
                     if running && generation == g { stop(); js("error", "Speech recognition is unavailable. Resume to try again.") }; return
@@ -8607,6 +8635,7 @@ let meetingLibrary = MeetingLibrary()
 let bar = MenuBar()
 let delegate = Delegate()
 NSApplication.shared.delegate = delegate
+DispatchQueue.main.asyncAfter(deadline: .now() + 5) { if UserDefaults.standard.bool(forKey: "onboarded") { autoSetup() } }
 if !hotkeyRegistered || !dictateHotkeyRegistered { DispatchQueue.main.async { settings.open() } }   // another app owns a saved shortcut: show the warning, not a silent dead key
 Updater.schedule()
 

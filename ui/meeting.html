@@ -336,6 +336,7 @@ document.addEventListener('click',e=>{if(!e.target.closest('.attachment'))docume
 window.meeting={
   privacy(on){saving=on;this.mode()},
   mode(m){if(m)for(const b of $('mode').children)b.setAttribute('aria-pressed',String(b.dataset.mode===m));document.querySelector('#prep h1').textContent=room()?'Get ready for your meeting':'Get ready for your call';$('notice').textContent=(room()?'Atticus hears the room through your microphone.':'Atticus hears this call and your microphone.')+' Transcripts stay on this Mac.'},
+  hint(t){toast(t)},
   liveNotes(t){$('livenotes').textContent=t||'';show('livebox',!!t);const b=document.querySelector('#tabs [data-tab=notes]');if(t&&b&&b.getAttribute('aria-selected')!=='true')b.classList.add('new')},
   saving(on){saving=on;document.body.classList.toggle('saved',on);show('saving',running&&!minimized&&on);$('endnote').textContent=on?'Saved on this Mac.':'This transcript isn’t saved. Copy it before closing. Enable saving in Settings for future meetings.';$('delete').disabled=!on;$('restore').title=on?'Restore · Saving transcript':'Restore'},
   recap(m){$('recap').textContent=m.summary+(m.action_items?.length?'\n\nAction items\n'+m.action_items.map(s=>'• '+s).join('\n'):'');show('recap',!!m.summary);if(!running)fit()},

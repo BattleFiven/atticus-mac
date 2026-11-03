@@ -14,7 +14,14 @@ command -v claude >/dev/null || [ -x ~/.local/bin/claude ] || echo "Note: Claude
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 # A compiler error must leave the installed app and its resources alone.
-swiftc -O -target "$(uname -m)-apple-macos26.0" Atticus.swift -o "$STAGE/Atticus"
+# An Xcode older than this macOS lacks its newest APIs; the Command Line Tools often carry the newer SDK, so try those next.
+swiftc -O -target "$(uname -m)-apple-macos26.0" Atticus.swift -o "$STAGE/Atticus" 2>"$STAGE/swiftc.log" || {
+  CLT=/Library/Developer/CommandLineTools
+  if [ -d "$CLT/SDKs" ] && [ "$DEVELOPER_DIR" != "$CLT" ]; then
+    echo "Building with the Command Line Tools SDK…"
+    DEVELOPER_DIR=$CLT swiftc -O -target "$(uname -m)-apple-macos26.0" Atticus.swift -o "$STAGE/Atticus" 2>"$STAGE/swiftc.log" || { grep -E "error:" "$STAGE/swiftc.log" | head -20; exit 1; }
+  else grep -E "error:" "$STAGE/swiftc.log" | head -20; exit 1; fi
+}
 APP=~/Applications/Atticus.app   # in Applications so System Settings can list it for permissions
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/ui"
 cp atticus.py "$APP/Contents/Resources/"

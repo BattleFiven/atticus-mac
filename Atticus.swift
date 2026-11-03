@@ -6073,6 +6073,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
     var expanded = NSSize(width: 340, height: 650), minimized = false, resizing = false
     var pendingBrief: String?
     var agentPrep: [String:Any]?
+    var liveNotes = "", notesDone = 0, notesAt = Date.distantPast, notesProcess: Process?   // Note live: Haiku folds new transcript lines into running notes
     var moveMonitor: Any?, screenObserver: NSObjectProtocol?, mouseDown: NSPoint?, dragOrigin: NSRect?, dragging = false
     var archive: MeetingArchive?, archiveEnded = false, meetingTitle = "", callApp = "Call"
     var room: Bool { callApp == "In person" }   // no call: the mic hears everyone, so its questions get answers too
@@ -6092,7 +6093,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
             if self.nudge != nil { self.nudge = nil; panel.contentView?.layer?.cornerRadius = 18; if loaded { js("prep") } }   // asked for while the call card shows: open prep
             panel.orderFrontRegardless(); focus(); return
         }
-        self.demo = demo; self.nudge = nudge; minimized = false; loaded = false; generation += 1; transcript = []; brief = ""; pending = ""; partial = ""; micPending = ""; micPartial = ""; elapsed = 0; serial = 0
+        self.demo = demo; self.nudge = nudge; minimized = false; loaded = false; generation += 1; transcript = []; brief = ""; pending = ""; partial = ""; micPending = ""; micPartial = ""; elapsed = 0; serial = 0; liveNotes = ""; notesDone = 0; notesProcess?.terminate(); notesProcess = nil
         archive = nil; archiveEnded = false; meetingTitle = nudge?["context"] as? String == "" ? "" : nudge?["title"] as? String ?? ""; callApp = nudge?["app"] as? String ?? "Call"
         let config = (Prefs.path as NSString).deletingLastPathComponent
         name = profileName(config + "/me.json")
@@ -6261,7 +6262,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         if callApp == "Call" { callApp = demo ? "Demo" : callAppsOnMic().sorted().first ?? "Call" }
         beginArchive()
         if archiveEnded { saveEvent(["kind": "resumed", "duration": elapsed]); archiveEnded = false }
-        js("listen"); bar.paint()
+        js("listen"); js("liveNotes", liveNotes); bar.paint()
         warmAnswer()
         // Short notes are the context as-is (no AI call); long notes or a link get boiled down while it listens.
         if context.count > meetingBriefLimit || context.range(of: #"^https?://\S+$"#, options: .regularExpression) != nil { prepare(context) }
@@ -6274,8 +6275,8 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
                 let micAllowed = demo ? true : await AVCaptureDevice.requestAccess(for: .audio)
                 guard running, generation == g, !Task.isCancelled else { return }
                 guard micAllowed else { stop(); js("error", "Allow Microphone access for Atticus in System Settings"); return }
-                let mic = SpeechTranscriber(locale: Locale(identifier: "en-US"), preset: .progressiveTranscription)
-                let tr = SpeechTranscriber(locale: Locale(identifier: "en-US"), preset: .progressiveTranscription)
+                let mic = SpeechTranscriber(locale: Locale(identifier: "it-IT"), preset: .progressiveTranscription)
+                let tr = SpeechTranscriber(locale: Locale(identifier: "it-IT"), preset: .progressiveTranscription)
                 if let request = try await AssetInventory.assetInstallationRequest(supporting: [tr]) { try await request.downloadAndInstall() }
                 guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [tr]) else {
                     if running && generation == g { stop(); js("error", "Speech recognition is unavailable. Resume to try again.") }; return
@@ -6375,6 +6376,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         saveEvent(["kind": "transcript", "at": at, "text": text, "seconds": Int(Date().timeIntervalSince(began)), "mic": you, "speaker": speaker])
         let row: [String: Any] = ["id": id, "text": text, "seconds": Int(Date().timeIntervalSince(began)), "mic": you, "speaker": askedBy]
         js("line", row)
+        updateNotes()
         if answer && !you {
             if let index = queue.firstIndex(where: { $0["id"] as? Int == id }) {
                 queue[index]["question"] = text; queue[index]["transcript"] = transcript; queue[index]["finalAt"] = at
@@ -6521,6 +6523,30 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         js("answer", reply)
         answerTimes[id] = nil
         warmAnswer(); next()
+    }
+    // At most one update in flight, every 60 s or 6 new lines; a failed update keeps the old notes and retries next time.
+    func updateNotes() {
+        guard running, notesProcess == nil, transcript.count > notesDone,
+              transcript.count - notesDone >= 6 || Date().timeIntervalSince(notesAt) >= 60 else { return }
+        let rows = Array(transcript[notesDone...]), upTo = transcript.count, g = generation, current = liveNotes
+        let lines = rows.map { ["speaker": ($0["mic"] as? Bool == true) ? "You" : room ? "Room" : callApp == "Call" ? "Them" : callApp, "text": $0["text"] ?? ""] }
+        let p = py(["--meeting-notes"]), input = Pipe(), output = Pipe(); p.standardInput = input; p.standardOutput = output
+        fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+        do { try p.run() } catch { return }
+        notesProcess = p; notesAt = Date()
+        DispatchQueue.global().async { [weak self] in
+            if let body = try? JSONSerialization.data(withJSONObject: ["notes": current, "lines": lines]) { try? input.fileHandleForWriting.write(contentsOf: body) }
+            try? input.fileHandleForWriting.close()
+            let out = output.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+            let notes = ((try? JSONSerialization.jsonObject(with: out)) as? [String: Any])?["notes"] as? String
+            DispatchQueue.main.async { [weak self] in
+                guard let self, notesProcess === p else { return }
+                notesProcess = nil
+                guard generation == g, let notes, !notes.isEmpty else { return }
+                liveNotes = notes; notesDone = upTo
+                saveEvent(["kind": "livenotes", "text": notes]); js("liveNotes", notes)
+            }
+        }
     }
     func worker(_ command: String, _ data: [String: Any], _ done: @escaping ([String: Any]) -> Void) {
         let p = py([command]), input = Pipe(), output = Pipe(); p.standardInput = input; p.standardOutput = output

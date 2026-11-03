@@ -91,6 +91,8 @@ h1{font-size:17px;font-weight:600;letter-spacing:-.3px;margin:0}
 .pane::-webkit-scrollbar{width:0}
 #brief{height:150px;font-size:12px}
 #ctxhelp{margin:12px 0 8px;font-size:11.5px;color:var(--fg3)}
+#livehead{margin:12px 0 6px;font-size:11.5px;color:var(--fg3)}
+#livenotes{white-space:pre-wrap;font-size:12.5px;line-height:1.45;padding:10px 12px;border-radius:12px;background:rgba(0,0,0,.18);box-shadow:inset 0 0 0 .5px var(--line);user-select:text}
 #livechoose{margin-top:8px;font-size:12px;padding:5px 10px}
 #retry{margin:10px 0 0;width:100%}
 #empty{text-align:center;color:var(--fg3);font-size:12px;padding:48px 12px 20px;line-height:1.5}
@@ -210,7 +212,7 @@ body.reduce *{animation:none!important;transition:none!important}
     <button id="latest" hidden>Latest ↓</button>
   </div>
   <section id="transcript" class="pane" role="tabpanel" hidden><div id="nolines">Words show up here as people talk.</div><div id="lines"></div><div id="partial" class="line live" hidden></div><div id="micpartial" class="line live mine" hidden></div><button id="selected" hidden>Ask about selected text</button></section>
-  <section id="ctx" class="pane" role="tabpanel" hidden><p id="ctxhelp">Facts Atticus should use. Edit them any time.</p><textarea id="brief" maxlength="6000" aria-label="Meeting notes" placeholder="Who’s on the call, what it’s about, what you want."></textarea><button id="livechoose" class="quiet">＋ Add files</button><div id="livefiles" class="attachments"></div><button id="retry" class="blue" hidden>Answer with these notes</button></section>
+  <section id="ctx" class="pane" role="tabpanel" hidden><div id="livebox" hidden><p id="livehead">Note live · aggiornate durante la chiamata</p><div id="livenotes" aria-live="polite"></div></div><p id="ctxhelp">Facts Atticus should use. Edit them any time.</p><textarea id="brief" maxlength="6000" aria-label="Meeting notes" placeholder="Who’s on the call, what it’s about, what you want."></textarea><button id="livechoose" class="quiet">＋ Add files</button><div id="livefiles" class="attachments"></div><button id="retry" class="blue" hidden>Answer with these notes</button></section>
 </section>
 
 <footer id="askbar" hidden><div class="chips"><button data-ask="What did I miss?">Catch me up</button><button id="screen">Explain the screen</button></div><form id="askform"><input id="ask" placeholder="Ask about the call…" aria-label="Ask about the call" maxlength="1500" autocomplete="off"><button id="send" type="button" aria-label="Ask by voice" title="Ask by voice"><b>↑</b><svg class="mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button></form><div id="voicebar" hidden><p id="heard" class="waiting">Listening…</p><button id="voicein" aria-label="Type instead" title="Click to type instead"><span id="askwave" aria-hidden="true"></span></button><button id="voicesend" class="blue" aria-label="Send">↑</button></div></footer>
@@ -334,6 +336,7 @@ document.addEventListener('click',e=>{if(!e.target.closest('.attachment'))docume
 window.meeting={
   privacy(on){saving=on;this.mode()},
   mode(m){if(m)for(const b of $('mode').children)b.setAttribute('aria-pressed',String(b.dataset.mode===m));document.querySelector('#prep h1').textContent=room()?'Get ready for your meeting':'Get ready for your call';$('notice').textContent=(room()?'Atticus hears the room through your microphone.':'Atticus hears this call and your microphone.')+' Transcripts stay on this Mac.'},
+  liveNotes(t){$('livenotes').textContent=t||'';show('livebox',!!t);const b=document.querySelector('#tabs [data-tab=notes]');if(t&&b&&b.getAttribute('aria-selected')!=='true')b.classList.add('new')},
   saving(on){saving=on;document.body.classList.toggle('saved',on);show('saving',running&&!minimized&&on);$('endnote').textContent=on?'Saved on this Mac.':'This transcript isn’t saved. Copy it before closing. Enable saving in Settings for future meetings.';$('delete').disabled=!on;$('restore').title=on?'Restore · Saving transcript':'Restore'},
   recap(m){$('recap').textContent=m.summary+(m.action_items?.length?'\n\nAction items\n'+m.action_items.map(s=>'• '+s).join('\n'):'');show('recap',!!m.summary);if(!running)fit()},
   settled(id){if(id!==viewTransition)return;document.body.classList.remove('transitioning');document.body.classList.add('revealing')},

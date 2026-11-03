@@ -44,7 +44,7 @@
   .pill.blue { background: var(--accent); color: #fff; box-shadow: 0 1px 3px rgba(10,132,255,.4); }
   .pill.red { color: var(--danger); }
   .pill:disabled { opacity: .5; cursor: default; }
-  #live { margin-top: 10px; width: 100%; box-sizing: border-box; }
+  .foot { display: flex; gap: 8px; margin-top: 10px; } #live { flex: 1; } .pill.round { width: 30px; padding: 0; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #ff3b30; box-shadow: 0 0 0 3px rgba(255,59,48,.18); }
 
   /* content */
@@ -136,13 +136,14 @@
   <symbol id="i-cal" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></symbol>
   <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
   <symbol id="i-redo" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4.5h-4.5"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
   <symbol id="i-q" viewBox="0 0 24 24"><path d="M12 20.5a8.5 8.5 0 1 0-7.5-4.5L3.5 20.5l4.5-1a8.4 8.4 0 0 0 4 1z"/></symbol>
 </svg>
 <aside class="glass">
   <h1>Riunioni</h1>
   <label class="search"><svg><use href="#i-search"/></svg><input id="q" type="search" placeholder="Cerca" autocomplete="off" aria-label="Cerca nelle riunioni"></label>
   <div id="list" role="list"></div>
-  <button class="pill" id="live"><span class="dot"></span>Nuova riunione</button>
+  <div class="foot"><button class="pill" id="live"><span class="dot"></span>Nuova riunione</button><button class="pill round" id="settings" title="Impostazioni di Atticus (⌘,)"><svg><use href="#i-gear"/></svg></button></div>
 </aside>
 <main>
   <div id="empty"><svg><use href="#i-wave"/></svg><br>Seleziona una riunione.<br>Quelle registrate con Meeting Copilot compaiono qui.</div>
@@ -338,12 +339,14 @@ $('export').onclick = () => current && post({do: 'export', id: current.id});
 $('delete').onclick = () => current && post({do: 'delete', id: current.id});
 $('regen').onclick = $('regen2').onclick = regen;
 $('live').onclick = () => post({do: 'live'});
+$('settings').onclick = () => post({do: 'settings'});
 $('askform').onsubmit = e => { e.preventDefault(); ask() };
 $('askq').oninput = grow;
 $('askq').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask() } };
 $('title').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); $('title').blur() } if (e.key === 'Escape') { $('title').textContent = current?.title || ''; $('title').blur() } };
 $('title').onblur = () => { const t = $('title').textContent.trim(); if (current && t && t !== current.title) post({do: 'rename', id: current.id, title: t}); else if (current) $('title').textContent = current.title };
 document.addEventListener('keydown', e => {
+  if (e.metaKey && e.key === ',') { e.preventDefault(); post({do: 'settings'}) }
   if (e.metaKey && e.key.toLowerCase() === 'f') { e.preventDefault(); (tab === 'trascrizione' ? $('tfind') : $('q')).focus() }
   if (e.metaKey && ['1', '2', '3', '4'].includes(e.key)) { e.preventDefault(); show(['minute', 'note', 'trascrizione', 'chiedi'][+e.key - 1]) }
 });

@@ -5239,7 +5239,7 @@ final class Delegate: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
     func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        UserDefaults.standard.bool(forKey: "onboarded") ? settings.open() : onboarding.open()
+        UserDefaults.standard.bool(forKey: "onboarded") ? meetingLibrary.open() : onboarding.open()   // opening the app shows Riunioni; Settings is one click from there
         return false
     }
 }
@@ -5885,6 +5885,7 @@ final class MeetingLibrary: NSObject, WKScriptMessageHandler, NSWindowDelegate {
                 }
             }
         case "live": if Prefs.bool("meeting") { meeting.open() }
+        case "settings": settings.open()
         default: break
         }
     }

@@ -6127,6 +6127,78 @@ func meetingCalendarContext(_ done: @escaping ([String: Any]?, String?) -> Void)
     }
 }
 
+// Teams live captions ("Sottotitoli in tempo reale"), read through Accessibility: each entry is a
+// fui-ChatMessageCompact__body group holding the speaker's name and the words. While they flow, they replace
+// Apple's transcription of the call, so every line carries who said it.
+final class TeamsCaptions {
+    struct Entry { let element: AXUIElement; var name: String; var text: String; var changed: Date; var emitted: Bool }
+    private var container: AXUIElement?, searchedAt = Date.distantPast, entries: [Entry] = [], primed: [Int: String] = [:]
+    private(set) var lastSeen = Date.distantPast
+    private let queue = DispatchQueue(label: "teams.captions")
+    var active: Bool { Date().timeIntervalSince(lastSeen) < 20 }
+    static var app: NSRunningApplication? { NSRunningApplication.runningApplications(withBundleIdentifier: "com.microsoft.teams2").first ?? NSRunningApplication.runningApplications(withBundleIdentifier: "com.microsoft.teams").first }
+
+    private static func attr(_ e: AXUIElement, _ k: String) -> AnyObject? { var v: AnyObject?; AXUIElementCopyAttributeValue(e, k as CFString, &v); return v }
+    private static func children(_ e: AXUIElement) -> [AXUIElement] { attr(e, "AXChildren") as? [AXUIElement] ?? [] }
+    private static func label(_ e: AXUIElement) -> String { [attr(e, "AXTitle"), attr(e, "AXDescription")].compactMap { $0 as? String }.first { !$0.isEmpty } ?? "" }
+
+    // The meeting window's title, such as "Duolly x Banca Ifis - Check point interno".
+    static func meetingTitle() -> String? {
+        guard let a = app else { return nil }
+        let windows = attr(AXUIElementCreateApplication(a.processIdentifier), "AXWindows") as? [AXUIElement] ?? []
+        return windows.compactMap { attr($0, "AXTitle") as? String }.first { !$0.isEmpty && !$0.localizedCaseInsensitiveContains("Microsoft Teams") }
+    }
+    private func find(_ e: AXUIElement, _ depth: Int) -> AXUIElement? {
+        if depth > 70 { return nil }
+        if Self.attr(e, "AXRole") as? String == "AXGroup", Self.label(e).hasPrefix("Sottotitoli in tempo reale") || Self.label(e).hasPrefix("Live captions") { return e }
+        for c in Self.children(e) { if let f = find(c, depth + 1) { return f } }
+        return nil
+    }
+    private func bodies(_ e: AXUIElement, _ depth: Int, _ out: inout [AXUIElement]) {
+        if depth > 12 { return }
+        if (Self.attr(e, "AXDOMClassList") as? [String])?.contains("fui-ChatMessageCompact__body") == true { out.append(e); return }
+        for c in Self.children(e) { bodies(c, depth + 1, &out) }
+    }
+    func reset() { queue.async { self.container = nil; self.entries = []; self.primed = [:]; self.searchedAt = .distantPast; self.lastSeen = .distantPast } }
+    // Polled every second during a Teams call. Lines already on screen when listening began are skipped;
+    // a line is final once it stops changing for 2.5 s and a newer line exists, or after 6 s, or at the end.
+    func poll(flushAll: Bool = false, _ emit: @escaping ([(String, String)]) -> Void) {
+        queue.async { [self] in
+            guard let a = Self.app else { return }
+            let appEl = AXUIElementCreateApplication(a.processIdentifier)
+            AXUIElementSetAttributeValue(appEl, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+            if container == nil || Self.children(container!).isEmpty {
+                container = nil
+                guard Date().timeIntervalSince(searchedAt) > 5 else { return }
+                searchedAt = Date()
+                for w in Self.attr(appEl, "AXWindows") as? [AXUIElement] ?? [] { if let f = find(w, 0) { container = f; break } }
+                guard container != nil else { return }
+            }
+            var found: [AXUIElement] = []; bodies(container!, 0, &found)
+            let now = Date(), firstLook = entries.isEmpty && primed.isEmpty
+            for b in found {
+                let texts = Self.children(b).compactMap { Self.attr($0, "AXValue") as? String ?? Self.label($0) }.filter { !$0.isEmpty }
+                guard texts.count >= 2 else { continue }
+                let name = texts[0], text = texts[1...].joined(separator: " ")
+                if firstLook { primed[Int(CFHash(b))] = text; continue }
+                if let seen = primed[Int(CFHash(b))], text.hasPrefix(String(seen.prefix(40))) { continue }   // on screen before we listened (Teams may reuse a row for new words)
+                lastSeen = now
+                if let i = entries.firstIndex(where: { CFEqual($0.element, b) }) {
+                    if entries[i].text != text { entries[i].text = text; entries[i].name = name; entries[i].changed = now; entries[i].emitted = false }
+                } else { entries.append(Entry(element: b, name: name, text: text, changed: now, emitted: false)) }
+            }
+            if firstLook && !found.isEmpty { lastSeen = now }
+            var out: [(String, String)] = []
+            for i in entries.indices where !entries[i].emitted {
+                let quiet = now.timeIntervalSince(entries[i].changed), newer = i < entries.count - 1
+                if flushAll || (newer && quiet >= 2.5) || quiet >= 6 { entries[i].emitted = true; out.append((entries[i].name, entries[i].text)) }
+            }
+            if entries.count > 400 { entries.removeFirst(entries.count - 400) }
+            if !out.isEmpty { DispatchQueue.main.async { emit(out) } }
+        }
+    }
+}
+
 final class MeetingCopilot: NSObject, WKScriptMessageHandler {
     var panel: KeyPanel?, web: WKWebView?, audio: MeetingAudio?, analyzer: SpeechAnalyzer?, reading: Task<Void, Never>?, starting: Task<Void, Never>?
     var micAnalyzer: SpeechAnalyzer?, micReading: Task<Void, Never>?, analyzing: Task<Void, Never>?, micAnalyzing: Task<Void, Never>?, stopping: Task<Void, Never>?
@@ -6141,6 +6213,8 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
     var expanded = NSSize(width: 340, height: 650), minimized = false, resizing = false
     var pendingBrief: String?
     var agentPrep: [String:Any]?
+    let captions = TeamsCaptions()
+    var captionTimer: Timer?
     var liveNotes = "", notesDone = 0, notesAt = Date.distantPast, notesProcess: Process?   // Note live: Haiku folds new transcript lines into running notes
     var moveMonitor: Any?, screenObserver: NSObjectProtocol?, mouseDown: NSPoint?, dragOrigin: NSRect?, dragging = false
     var archive: MeetingArchive?, archiveEnded = false, meetingTitle = "", callApp = "Call"
@@ -6161,7 +6235,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
             if self.nudge != nil { self.nudge = nil; panel.contentView?.layer?.cornerRadius = 18; if loaded { js("prep") } }   // asked for while the call card shows: open prep
             panel.orderFrontRegardless(); focus(); return
         }
-        self.demo = demo; self.nudge = nudge; minimized = false; loaded = false; generation += 1; transcript = []; brief = ""; pending = ""; partial = ""; micPending = ""; micPartial = ""; elapsed = 0; serial = 0; liveNotes = ""; notesDone = 0; notesProcess?.terminate(); notesProcess = nil
+        self.demo = demo; self.nudge = nudge; minimized = false; loaded = false; generation += 1; transcript = []; brief = ""; pending = ""; partial = ""; micPending = ""; micPartial = ""; elapsed = 0; serial = 0; captions.reset(); captionTimer?.invalidate(); captionTimer = nil; liveNotes = ""; notesDone = 0; notesProcess?.terminate(); notesProcess = nil
         archive = nil; archiveEnded = false; meetingTitle = nudge?["context"] as? String == "" ? "" : nudge?["title"] as? String ?? ""; callApp = nudge?["app"] as? String ?? "Call"
         let config = (Prefs.path as NSString).deletingLastPathComponent
         name = profileName(config + "/me.json")
@@ -6329,6 +6403,11 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         guard loaded, !running, Prefs.bool("meeting"), !Prefs.bool("paused") else { return }
         cancelWork(); brief = String(context.prefix(meetingBriefLimit)); briefEdited = false; running = true; began = Date().addingTimeInterval(-elapsed); nudge = nil; app.close(clear: false); app.shortcutDown = false
         if callApp == "Call" { callApp = demo ? "Demo" : callAppsOnMic().sorted().first ?? "Call" }
+        if callApp == "Teams", meetingTitle.isEmpty, let t = TeamsCaptions.meetingTitle() { meetingTitle = t }
+        if callApp == "Teams" {
+            captionTimer?.invalidate()
+            captionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.captions.poll { self?.captionLines($0) } }
+        }
         beginArchive()
         if archiveEnded { saveEvent(["kind": "resumed", "duration": elapsed]); archiveEnded = false }
         js("listen"); js("liveNotes", liveNotes); bar.paint()
@@ -6435,6 +6514,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         let text = (mic ? micPending : pending).trimmingCharacters(in: .whitespacesAndNewlines)
         if mic { micPending = "" } else { pending = "" }
         guard running, !text.isEmpty else { return }
+        if callApp == "Teams", captions.active { return }   // Teams' captions carry these words, with the speaker's name
         let at = Date().timeIntervalSince1970, you = mic && !room
         let candidate = mic ? micPartialQuestion : partialQuestion
         if mic { micPartialQuestion = nil } else { partialQuestion = nil }
@@ -6593,12 +6673,30 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         answerTimes[id] = nil
         warmAnswer(); next()
     }
+    // Teams caption lines become transcript lines with the speaker's name; the user's own name becomes "You".
+    func captionLines(_ lines: [(String, String)], late: Bool = false) {
+        guard running || late else { return }
+        let first = name.split(separator: " ").first.map(String.init)?.lowercased() ?? ""
+        for (who, text) in lines {
+            let you = !first.isEmpty && who.lowercased().hasPrefix(first)
+            let at = Date().timeIntervalSince1970, seconds = Int(Date().timeIntervalSince(began)); serial += 1
+            transcript.append(["at": at, "text": text, "seconds": seconds, "mic": you, "speaker": you ? "You" : who])
+            saveEvent(["kind": "transcript", "at": at, "text": text, "seconds": seconds, "mic": you, "speaker": you ? "You" : who])
+            let row: [String: Any] = ["id": serial, "text": text, "seconds": seconds, "mic": you, "speaker": you ? "You" : who]
+            js("line", row)
+            guard running, !you, text.hasSuffix("?") else { continue }
+            let automatic = Prefs.str("meetingAuto") != "ask"
+            js("question", row.merging(["auto": automatic, "heard": true]) { $1 })
+            if automatic { enqueue(serial, text, best: Prefs.str("meetingAuto") == "always", at: at, detectedAt: Date().timeIntervalSince1970) }
+        }
+        updateNotes()
+    }
     // At most one update in flight, every 60 s or 6 new lines; a failed update keeps the old notes and retries next time.
     func updateNotes() {
         guard running, notesProcess == nil, transcript.count > notesDone,
               transcript.count - notesDone >= 6 || Date().timeIntervalSince(notesAt) >= 60 else { return }
         let rows = Array(transcript[notesDone...]), upTo = transcript.count, g = generation, current = liveNotes
-        let lines = rows.map { ["speaker": ($0["mic"] as? Bool == true) ? "You" : room ? "Room" : callApp == "Call" ? "Them" : callApp, "text": $0["text"] ?? ""] }
+        let lines = rows.map { ["speaker": $0["speaker"] as? String ?? (($0["mic"] as? Bool == true) ? "You" : room ? "Room" : callApp == "Call" ? "Them" : callApp), "text": $0["text"] ?? ""] }
         let p = py(["--meeting-notes"]), input = Pipe(), output = Pipe(); p.standardInput = input; p.standardOutput = output
         fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         do { try p.run() } catch { return }
@@ -6666,7 +6764,9 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         guard running else { return }
         voice = false; voiceText = ""; voicePartial = ""
         pending += " " + partial; partial = ""; micPending += " " + micPartial; micPartial = ""
-        flush(answer: false); flush(answer: false, mic: true); elapsed = Date().timeIntervalSince(began); running = false; minimized = false; generation += 1; starting?.cancel(); starting = nil; settle?.cancel(); micSettle?.cancel(); timer?.invalidate(); timer = nil
+        flush(answer: false); flush(answer: false, mic: true)
+        if let t = captionTimer { t.invalidate(); captionTimer = nil; captions.poll(flushAll: true) { [weak self] in self?.captionLines($0, late: true) } }
+        elapsed = Date().timeIntervalSince(began); running = false; minimized = false; generation += 1; starting?.cancel(); starting = nil; settle?.cancel(); micSettle?.cancel(); timer?.invalidate(); timer = nil
         cancelWork(); reading?.cancel(); reading = nil; micReading?.cancel(); micReading = nil
         analyzing?.cancel(); analyzing = nil; micAnalyzing?.cancel(); micAnalyzing = nil
         let capture = audio, an = analyzer, micAn = micAnalyzer; audio = nil; analyzer = nil; micAnalyzer = nil

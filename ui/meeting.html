@@ -368,6 +368,7 @@ window.meeting={
     const t=document.createElement('span');t.className='t';t.textContent=time(row.seconds||0);
     const text=document.createElement('span');text.className='text';text.textContent=row.text;
     if(row.mic){const who=document.createElement('b');who.textContent='You · ';text.prepend(who)}
+    else if(row.speaker&&!/^Someone/.test(row.speaker)){const who=document.createElement('b');who.textContent=row.speaker+' · ';text.prepend(who)}
     d.append(t,text);
     if(!row.mic){const b=document.createElement('button');b.className='lineask';b.textContent='Answer';b.setAttribute('aria-label','Answer: '+row.text);b.onclick=()=>{post({do:'ask',text:row.text});tab('answers')};d.append(b)}
     $('lines').append(d);follow(was);

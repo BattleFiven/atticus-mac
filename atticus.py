@@ -6835,7 +6835,7 @@ def meeting_prompt(data):
     now = float(data.get('now', time.time()))
     window = 120 if data.get('question') == 'What was said in the last 2 minutes?' else 180
     rows = [r for r in data.get('transcript', []) if now - window <= float(r['at']) <= now]
-    transcript = '\n'.join(f"[{int(now - float(r['at']))}s ago] {'You: ' if r.get('mic') else ''}{r['text']}" for r in rows)
+    transcript = '\n'.join(f"[{int(now - float(r['at']))}s ago] {'You: ' if r.get('mic') else (str(r['speaker']) + ': ') if r.get('speaker') else ''}{r['text']}" for r in rows)
     question = str(data.get('question', ''))[:1500]
     suffix = '\nMode: manual ask.' if data.get('best') else '\nMode: automatic candidate.'
     brief = str(data.get('brief', ''))[:MEETING_BRIEF_LIMIT]

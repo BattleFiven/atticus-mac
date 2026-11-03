@@ -5886,6 +5886,8 @@ final class MeetingLibrary: NSObject, WKScriptMessageHandler, NSWindowDelegate {
             }
         case "live": if Prefs.bool("meeting") { meeting.open() }
         case "settings": settings.open()
+        case "actions": settings.meetings(["action": "actions"]) { [weak self] r in self?.send("actions", r) }
+        case "done": settings.meetings(["action": "done", "id": id, "done": b["done"] ?? []]) { [weak self] r in self?.send("actions", r) }
         default: break
         }
     }

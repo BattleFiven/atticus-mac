@@ -33,6 +33,16 @@
   .row { all: unset; display: flex; gap: 10px; align-items: flex-start; box-sizing: border-box; width: 100%; padding: 9px 10px; border-radius: 12px; cursor: pointer; transition: background .15s; }
   .row:hover { background: var(--hover); }
   .row.on { background: var(--sel); }
+  #todorow { margin-top: 10px; align-items: center; }
+  #todorow .badge { background: linear-gradient(160deg, #ff9f0a, #f76b15); }
+  #todorow .count { color: #fff; margin-top: 0; font-size: 11px; display: grid; }
+  #todorow .count[hidden] { display: none; }
+  .count { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; box-sizing: border-box; border-radius: 999px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 600; display: grid; place-items: center; }
+  #todoview { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+  #todoview h2 { font: 700 22px/1.2 -apple-system, "SF Pro Display", system-ui; letter-spacing: -.015em; margin: 2px 0 6px; }
+  .group h3 { cursor: pointer; } .group h3:hover span { text-decoration: underline; }
+  .group h3 small { margin-left: auto; font-weight: 400; color: var(--fg3); }
+  .check em { display: block; font-style: normal; font-size: 11.5px; color: var(--fg3); margin-top: 2px; }
   .badge { width: 28px; height: 28px; border-radius: 8px; flex: none; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 12px; background: linear-gradient(160deg, #7b83eb, #4b53bc); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.25); }
   .badge.other { background: linear-gradient(160deg, #8e8e93, #636366); }
   .row .t { min-width: 0; flex: 1; }
@@ -142,11 +152,17 @@
 <aside class="glass">
   <h1>Riunioni</h1>
   <label class="search"><svg><use href="#i-search"/></svg><input id="q" type="search" placeholder="Cerca" autocomplete="off" aria-label="Cerca nelle riunioni"></label>
+  <button class="row" id="todorow"><div class="badge"><svg style="width:15px;height:15px;stroke-width:2"><use href="#i-list"/></svg></div><div class="t"><b>Azioni da svolgere</b></div><span class="count" id="todocount" hidden></span></button>
   <div id="list" role="list"></div>
   <div class="foot"><button class="pill" id="live"><span class="dot"></span>Nuova riunione</button><button class="pill round" id="settings" title="Impostazioni di Atticus (⌘,)"><svg><use href="#i-gear"/></svg></button></div>
 </aside>
 <main>
   <div id="empty"><svg><use href="#i-wave"/></svg><br>Seleziona una riunione.<br>Quelle registrate con Meeting Copilot compaiono qui.</div>
+  <div id="todoview" hidden>
+    <h2>Azioni da svolgere</h2>
+    <div id="todofilters" style="display:flex;gap:6px;margin:6px 0 14px"></div>
+    <section class="pane" id="todolist"></section>
+  </div>
   <div id="detail" hidden>
     <header>
       <div class="t"><h2 id="title" contenteditable="plaintext-only" spellcheck="false" title="Clicca per rinominare"></h2><div id="meta"></div></div>
@@ -190,7 +206,7 @@
 const $ = id => document.getElementById(id);
 const post = m => window.webkit?.messageHandlers.lib.postMessage(m);
 let meetings = [], current = null, markdown = '', tab = 'minute', chats = {}, asking = false, qTimer, noticeTimer, regenerating = null;
-const autoRegen = new Set(), done = JSON.parse((() => { try { return localStorage.getItem('done') } catch { return null } })() || '{}');
+const autoRegen = new Set(); let actions = [], todoFilter = 'todo', view = 'meeting';
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const svg = id => `<svg><use href="#i-${id}"/></svg>`;
 const time = s => new Date(s * 1000).toLocaleTimeString('it-IT', {hour: '2-digit', minute: '2-digit'});
@@ -206,6 +222,26 @@ function dayLabel(s) {
   if (diff === 0) return 'Oggi'; if (diff === 1) return 'Ieri';
   if (diff < 7) return d.toLocaleDateString('it-IT', {weekday: 'long'}).replace(/^./, c => c.toUpperCase());
   return d.toLocaleDateString('it-IT', {day: 'numeric', month: 'long', year: d.getFullYear() === t.getFullYear() ? undefined : 'numeric'});
+}
+const me = () => ['io', 'tu', 'alessandro', 'battaglia'];
+const mine = a => me().some(w => new RegExp(`(^|[^\\p{L}])${w}([^\\p{L}]|$)`, 'iu').test(a));
+function paintTodoCount() { const n = actions.reduce((k, m) => k + m.items.filter((_, i) => !m.done.includes(i)).length, 0); $('todocount').textContent = n; $('todocount').hidden = !n }
+function showTodo() {
+  view = 'todo'; current = null; $('detail').hidden = true; $('empty').hidden = true; $('todoview').hidden = false;
+  $('todorow').classList.add('on'); paintList(); paintTodo(); post({do: 'actions'});
+}
+function paintTodo() {
+  const filters = [['todo', 'Da fare'], ['mine', 'Mie'], ['done', 'Fatte'], ['all', 'Tutte']];
+  $('todofilters').innerHTML = filters.map(([k, l]) => `<button class="chip${todoFilter === k ? ' on' : ''}" data-k="${k}">${l}</button>`).join('');
+  for (const b of $('todofilters').children) b.onclick = () => { todoFilter = b.dataset.k; paintTodo() };
+  const keep = (m, i) => { const d = m.done.includes(i); return todoFilter === 'all' || (todoFilter === 'done' ? d : !d && (todoFilter !== 'mine' || mine(m.items[i]))) };
+  const groups = actions.map(m => ({m, idx: m.items.map((_, i) => i).filter(i => keep(m, i))})).filter(g => g.idx.length);
+  $('todolist').innerHTML = groups.length ? groups.map(({m, idx}) => `<div class="card group"><h3 data-id="${esc(m.id)}">${svg('doc')}<span>${esc(m.title)}</span><small>${esc(dayLabel(m.started))}, ${time(m.started)}</small></h3>${idx.map(i => {
+      const [what, ...rest] = m.items[i].split(' – ');
+      return `<div class="check${m.done.includes(i) ? ' done' : ''}" data-id="${esc(m.id)}" data-i="${i}"><i title="${m.done.includes(i) ? 'Segna come da fare' : 'Segna come fatta'}"></i><span>${esc(what)}${rest.length ? `<em>${esc(rest.join(' · '))}</em>` : ''}</span></div>`;
+    }).join('')}</div>`).join('') : `<div class="hero">${svg('list')}<b>${todoFilter === 'done' ? 'Nessuna azione completata' : 'Niente da fare'}</b>${todoFilter === 'todo' ? 'Tutte le azioni delle riunioni sono state completate.' : ''}</div>`;
+  for (const h of $('todolist').querySelectorAll('h3')) h.onclick = () => open(h.dataset.id);
+  for (const c of $('todolist').querySelectorAll('.check')) c.querySelector('i').onclick = () => toggleDone(c.dataset.id, +c.dataset.i);
 }
 const firstLine = m => { const s = (m.summary || '').split('\n')[0]; return /^(Transcript excerpt|From transcript)/.test(s) ? '' : s };
 function md(text) {   // just enough Markdown for answers and minutes: headings, bullets, bold
@@ -232,7 +268,7 @@ function paintList() {
   $('list').innerHTML = out.join('');
   for (const b of $('list').querySelectorAll('.row')) b.onclick = () => open(b.dataset.id);
 }
-function open(id) { post({do: 'get', id}); }
+function open(id) { view = 'meeting'; $('todorow').classList.remove('on'); $('todoview').hidden = true; post({do: 'get', id}); }
 function show(t) {
   tab = t;
   for (const b of document.querySelectorAll('nav button')) b.setAttribute('aria-selected', String(b.dataset.t === t));
@@ -243,7 +279,8 @@ function show(t) {
 function paintMeeting(m, md_) {
   const switched = current?.id !== m.id;
   current = m; markdown = md_ || '';
-  $('empty').hidden = true; $('detail').hidden = false;
+  if (view !== 'meeting') return;
+  $('empty').hidden = true; $('todoview').hidden = true; $('detail').hidden = false;
   $('title').textContent = m.title;
   const people = [...new Set((m.transcript || []).map(r => who(r.speaker)))].filter(p => p !== 'Altri' || true);
   const named = people.filter(p => !['Tu', 'Altri', 'Teams', 'Zoom', 'Room'].includes(p));
@@ -256,10 +293,10 @@ function paintMeeting(m, md_) {
   const local = !m.summary || m.summary_source === 'local';
   $('localbanner').hidden = !local || !(m.transcript || []).length;
   $('summary').innerHTML = local ? `<p class="muted">${regenerating === m.id ? 'Sto scrivendo le minute…' : 'Minute non ancora disponibili.'}</p>` : md(m.summary);
-  const acts = m.action_items || [], doneSet = new Set(done[m.id] || []);
+  const acts = m.action_items || [], doneSet = new Set(m.actions_done || []);
   $('actblock').hidden = local || !acts.length;
   $('actions').innerHTML = acts.map((a, i) => `<div class="check${doneSet.has(i) ? ' done' : ''}" data-i="${i}"><i title="Segna come fatta"></i><span>${esc(a)}</span></div>`).join('');
-  for (const c of $('actions').querySelectorAll('.check')) c.querySelector('i').onclick = () => toggleDone(+c.dataset.i);
+  for (const c of $('actions').querySelectorAll('.check')) c.querySelector('i').onclick = () => toggleDone(m.id, +c.dataset.i);
   $('ansblock').hidden = !m.answers?.length; $('answers').textContent = (m.answers || []).map(r => (r.question || '') + '\n' + (r.lines || []).join('\n')).join('\n\n');
   $('liveblock').hidden = !m.live_notes; $('livenotes').innerHTML = md(m.live_notes);
   $('noteblock').hidden = !m.notes; $('notes').textContent = m.notes || '';
@@ -273,10 +310,12 @@ function paintMeeting(m, md_) {
   // a recap that fell back to a raw excerpt is written again by the AI once, without asking
   if (local && m.status === 'Ended' && (m.transcript || []).length && !autoRegen.has(m.id) && !regenerating) { autoRegen.add(m.id); regen() }
 }
-function toggleDone(i) {
-  const s = new Set(done[current.id] || []); s.has(i) ? s.delete(i) : s.add(i); done[current.id] = [...s];
-  try { localStorage.setItem('done', JSON.stringify(done)) } catch {}
-  paintMeeting(current, markdown);
+function toggleDone(id, i) {   // saved with the meeting, so the list and the meeting agree
+  const m = actions.find(x => x.id === id), base = m ? m.done : current?.id === id ? current.actions_done || [] : [];
+  const s = new Set(base); s.has(i) ? s.delete(i) : s.add(i); const doneList = [...s];
+  if (m) m.done = doneList; if (current?.id === id) { current.actions_done = doneList; paintMeeting(current, markdown) }
+  if (view === 'todo') paintTodo(); paintTodoCount();
+  post({do: 'done', id, done: doneList});
 }
 function setRegen(on) {
   for (const b of [$('regen'), $('regen2')]) { b.disabled = on; b.innerHTML = on ? '<span class="spin"></span>Scrivo le minute…' : b.id === 'regen' ? svg('redo') + 'Rigenera minute' : 'Genera minute' }
@@ -313,7 +352,8 @@ function ask(text) {
 }
 function grow() { $('askq').style.height = 'auto'; $('askq').style.height = Math.min(120, $('askq').scrollHeight) + 'px' }
 window.lib = {
-  list(r) { if (r.error) { notice('Non riesco ad aprire le riunioni.'); return } meetings = r.meetings || []; paintList(); if (!current && meetings[0]) open(meetings[0].id) },
+  list(r) { if (r.error) { notice('Non riesco ad aprire le riunioni.'); return } meetings = r.meetings || []; paintList(); if (!current && view === 'meeting' && meetings[0]) open(meetings[0].id); post({do: 'actions'}) },
+  actions(r) { if (r.actions) { actions = r.actions; paintTodoCount(); if (view === 'todo') paintTodo() } },
   meeting(r) {
     if (r.meeting && regenerating === r.meeting.id) { regenerating = null; if (r.meeting.summary_source === 'local') notice('Non sono riuscito a scrivere le minute. Riprova.') }
     else if (r.error && regenerating) { regenerating = null; notice('Operazione non riuscita.') }
@@ -339,6 +379,7 @@ $('export').onclick = () => current && post({do: 'export', id: current.id});
 $('delete').onclick = () => current && post({do: 'delete', id: current.id});
 $('regen').onclick = $('regen2').onclick = regen;
 $('live').onclick = () => post({do: 'live'});
+$('todorow').onclick = showTodo;
 $('settings').onclick = () => post({do: 'settings'});
 $('askform').onsubmit = e => { e.preventDefault(); ask() };
 $('askq').oninput = grow;

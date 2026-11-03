@@ -7372,7 +7372,7 @@ def meeting_read(identifier):
     folder = meeting_path(identifier)
     with meeting_file(folder, 'metadata.json') as f:
         m = json.load(f)
-    m.update(id=identifier, transcript=[], answers=[], notes='', live_notes='', summary='', action_items=[], summary_revision=None, ended=None, duration=0)
+    m.update(id=identifier, transcript=[], answers=[], notes='', live_notes='', actions_done=[], summary='', action_items=[], summary_revision=None, ended=None, duration=0)
     partials = {}
     with meeting_file(folder, 'events.jsonl') as f:
         events = []
@@ -7391,6 +7391,7 @@ def meeting_read(identifier):
         elif kind == 'answer': m['answers'].append(row)
         elif kind == 'notes': m['notes'] = str(row.get('text', ''))
         elif kind == 'livenotes': m['live_notes'] = str(row.get('text', ''))
+        elif kind == 'actions_done': m['actions_done'] = [i for i in row.get('done', []) if isinstance(i, int)]
         elif kind == 'summary':
             m['summary'] = str(row.get('text', '')); m['action_items'] = row.get('action_items', []); m['summary_revision'] = row.get('revision'); m['summary_source'] = row.get('source', '')
         elif kind == 'resumed': m['ended'] = None
@@ -7436,6 +7437,17 @@ def meeting_markdown(m):
         seconds = int(row.get('seconds', 0))
         lines.append(f"[{seconds // 3600:02d}:{seconds // 60 % 60:02d}:{seconds % 60:02d}] {row.get('speaker', 'Them')}: {row['text']}")
     return '\n'.join(lines) + '\n'
+
+
+def meeting_actions():
+    """Every saved meeting's action items, newest meeting first, with which ones are ticked off."""
+    out = []
+    for row in meeting_list(''):
+        try: m = meeting_read(row['id'])
+        except (OSError, ValueError, KeyError, TypeError): continue
+        if m['action_items'] and m.get('summary_source') != 'local':
+            out.append({'id': m['id'], 'title': m['title'], 'started': m['started'], 'app': m['app'], 'items': [str(a) for a in m['action_items']], 'done': m['actions_done']})
+    return out
 
 
 def meeting_ask(identifier, question, history):
@@ -7501,6 +7513,10 @@ def meeting_command(data):
     identifier = data.get('id')
     if action == 'delete':
         shutil.rmtree(meeting_path(identifier)); return {'deleted': identifier}
+    if action == 'actions': return {'actions': meeting_actions()}
+    if action == 'done':
+        meeting_append(identifier, {'kind': 'actions_done', 'done': sorted({int(i) for i in data.get('done', [])}), 'at': time.time()})
+        return {'actions': meeting_actions()}
     if action == 'ask': return meeting_ask(identifier, str(data.get('question', '')), data.get('history', []))
     if action == 'rename':
         title = ' '.join(str(data.get('title', '')).split())[:200]

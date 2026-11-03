@@ -5836,7 +5836,7 @@ final class MeetingLibrary: NSObject, WKScriptMessageHandler, NSWindowDelegate {
                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         applySharing(w)
         w.titlebarAppearsTransparent = true; w.titleVisibility = .hidden; w.title = "Riunioni"
-        w.isReleasedWhenClosed = false; w.delegate = self; w.contentMinSize = NSSize(width: 760, height: 480)
+        w.isReleasedWhenClosed = false; w.delegate = self; w.contentMinSize = NSSize(width: 820, height: 520)
         let bg = NSVisualEffectView(frame: w.contentRect(forFrameRect: w.frame))
         bg.material = .underWindowBackground; bg.blendingMode = .behindWindow; bg.state = .active
         let cfg = WKWebViewConfiguration()

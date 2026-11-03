@@ -185,18 +185,18 @@ enum DictationData {
 // Settings, shared with atticus.py (model, screen, openOn, instant): ~/.config/atticus/settings.json
 enum Prefs {
     static let path = (ProcessInfo.processInfo.environment["ATTICUS_DIR"] ?? NSString(string: "~/.config/atticus").expandingTildeInPath) + "/settings.json"
-    static let defaults: [String: Any] = ["hotkeyCode": 49, "hotkeyMods": controlKey | optionKey, "hotkeyLabel": "⌃⌥Space", "login": true, "paused": false, "corner": "top-left", "linger": "normal",
+    static let defaults: [String: Any] = ["hotkeyCode": -2, "hotkeyMods": 2304, "hotkeyLabel": "⌥⌘", "login": true, "paused": false, "corner": "top-left", "linger": "normal",
         "soundStart": "Pop", "soundRelease": "Bottle", "soundDone": "Glass", "soundStop": "Tink", "volume": 0.16, "client": "claude", "model": "haiku", "instant": true,
-        "wakeWord": false, "wakeWordName": "Atticus", "microphone": "automatic", "quietAudio": false, "quietLevel": 0.18, "agentModel": "sonnet", "agentUserTools": true, "fixSetup": false,
+        "wakeWord": true, "wakeWordName": "Atticus", "microphone": "automatic", "quietAudio": false, "quietLevel": 0.18, "agentModel": "sonnet", "agentUserTools": true, "fixSetup": false,
         "meetingStyle": "Direct", "meetingCustom": "", "meetingStyles": [
             ["name": "Direct", "text": "Lead with the answer in plain words. No hedging or filler."],
             ["name": "Persuasive", "text": "Speak to feelings first: why it matters to them and what it means for them, a vivid picture or short story, then the fact that backs it."],
             ["name": "Technical", "text": "Precise terms, numbers and how it works. Name the tradeoff."],
             ["name": "Friendly", "text": "Warm and conversational, like talking to a colleague. Simple words."]],
         "selection": true, "ahead": true, "aheadDelay": 0.7, "live": true, "screen": "auto", "openOn": "here", "workIn": "back", "miniScreen": true, "draw": true, "guideSteps": "auto", "pageJS": false,
-        "speak": false, "showAnswers": "stream", "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
-        "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "saveChats": true, "stats": true, "tips": true, "support": true, "comeBack": true, "askMe": true, "meetingSummary": true, "input": "voice", "talkMode": "hold", "speechModel": "speech", "whisperModel": "turbo", "whisperLanguage": "auto", "improve": false, "improveAsked": false, "draftInsert": "ask",
-        "dictateHotkeyCode": -1, "dictateHotkeyMods": 0, "dictateHotkeyLabel": "", "dictateMode": "cleanup", "dictateHistory": true, "dictateLearn": true, "dictateWords": [], "dictateFixes": [String: String](), "boxW": 500, "boxH": 420]
+        "speak": true, "showAnswers": "stream", "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
+        "learn": true, "safe": true, "pointer": false, "meeting": true, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": true, "meetingDetect": true, "learnMe": true, "saveChats": true, "stats": true, "tips": true, "support": false, "comeBack": true, "askMe": true, "meetingSummary": true, "input": "voice", "talkMode": "hold", "speechModel": "whisper", "whisperModel": "large", "whisperLanguage": "it", "improve": false, "improveAsked": false, "draftInsert": "ask",
+        "dictateHotkeyCode": -2, "dictateHotkeyMods": 1048576, "dictateHotkeyLabel": "fn", "dictateMode": "cleanup", "dictateHistory": true, "dictateLearn": true, "dictateWords": [], "dictateFixes": [String: String](), "boxW": 500, "boxH": 420]
     static let retiredKeys = ["quietAudio", "quietLevel", "autoCopy", "askMe", "corner", "linger", "soundStart", "soundRelease", "soundDone", "soundStop",
         "instant", "live", "ahead", "aheadDelay", "learn", "selection", "guideSteps", "workIn", "openOn", "miniScreen", "draftInsert",
         "meetingNudge", "meetingDetect", "meetingAuto", "fixSetup", "dictateLearn"]
@@ -5274,6 +5274,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
             add(m, "Paste Last Dictation", #selector(pasteDictation), "v", "doc.on.clipboard"); m.items.last?.keyEquivalentModifierMask = [.control, .command]
         }
         if Prefs.bool("meeting") { add(m, meeting.running ? "Stop Meeting Copilot" : "Meeting Copilot…", #selector(toggleMeeting), "", meeting.running ? "stop.circle" : "record.circle") }
+        add(m, "Riunioni…", #selector(openLibrary), "", "list.bullet.rectangle")
         add(m, Prefs.bool("paused") ? "Resume Atticus" : "Pause Atticus", #selector(pause), "", Prefs.bool("paused") ? "play.fill" : "pause.fill")
         m.addItem(.separator())
         add(m, "Settings…", #selector(openSettings), ",", "gearshape")
@@ -5314,6 +5315,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
     @objc func ask() { if meeting.running { return meeting.focus() }; app.clickTalk = true; app.start(); if !app.engine.isRunning { app.clickTalk = false } }   // the same box as the shortcut, like its mic button
     @objc func pause() { Prefs.set("paused", !Prefs.bool("paused")); if Prefs.bool("paused") { meeting.stop(paused: true); app.close(clear: false); agentsUI.stopAll() }; paint(); settings.push() }
     @objc func openSettings() { settings.open() }
+    @objc func openLibrary() { meetingLibrary.open() }
     @objc func dictationHistory() { settings.open(tab: "dictation") }
     @objc func pasteDictation() { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { app.pasteLastDictation() } }   // after the menu closes and focus returns
     @objc func openAgents() { agentsUI.openView() }
@@ -5822,6 +5824,72 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
 }
 
 // The page fills the window under its title bar and would swallow drags; this strip moves the window and double-click zooms.
+// Riunioni (ui/library.html): the saved meetings in their own window, with minutes, notes, transcript and questions.
+final class MeetingLibrary: NSObject, WKScriptMessageHandler, NSWindowDelegate {
+    var win: NSWindow?, web: WKWebView?, opening: String?
+
+    func open(_ id: String? = nil) {
+        NSApp.activate(ignoringOtherApps: true)
+        if let w = win { w.makeKeyAndOrderFront(nil); list(""); if let id { send("select", id) }; return }
+        opening = id
+        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 720),
+                         styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        applySharing(w)
+        w.titlebarAppearsTransparent = true; w.titleVisibility = .hidden; w.title = "Riunioni"
+        w.isReleasedWhenClosed = false; w.delegate = self; w.contentMinSize = NSSize(width: 760, height: 480)
+        let bg = NSVisualEffectView(frame: w.contentRect(forFrameRect: w.frame))
+        bg.material = .underWindowBackground; bg.blendingMode = .behindWindow; bg.state = .active
+        let cfg = WKWebViewConfiguration()
+        cfg.userContentController.add(self, name: "lib")
+        let v = WKWebView(frame: bg.bounds, configuration: cfg)
+        v.autoresizingMask = [.width, .height]; v.setValue(false, forKey: "drawsBackground")
+        loadPage(v, "library.html")
+        let bar = TitleBar(frame: NSRect(x: 0, y: bg.bounds.height - 28, width: bg.bounds.width, height: 28)); bar.autoresizingMask = [.width, .minYMargin]
+        bg.addSubview(v); bg.addSubview(bar); w.contentView = bg
+        win = w; web = v
+        w.center(); w.setFrameUsingName("AtticusLibrary"); w.setFrameAutosaveName("AtticusLibrary")
+        w.makeKeyAndOrderFront(nil)
+    }
+    func windowWillClose(_ n: Notification) {
+        web?.configuration.userContentController.removeScriptMessageHandler(forName: "lib"); web = nil; win = nil
+    }
+    func send(_ call: String, _ v: Any) {
+        DispatchQueue.main.async { [weak self] in callJS(self?.web, "lib." + call, [v]) }
+    }
+    func list(_ query: String) { settings.meetings(["action": "list", "query": query]) { [weak self] r in self?.send("list", r) } }
+    func refreshIfOpen(_ id: String?) {   // a meeting just saved or recapped shows up without reopening
+        guard win != nil else { return }
+        list(""); if let id { settings.meetings(["action": "get", "id": id]) { [weak self] r in self?.send("updated", r) } }
+    }
+    func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
+        guard let b = m.body as? [String: Any], let action = b["do"] as? String else { return }
+        let id = b["id"] as? String ?? ""
+        switch action {
+        case "ready": list(""); if let o = opening { send("select", o); opening = nil }
+        case "list": list(b["query"] as? String ?? "")
+        case "get", "resummarize": settings.meetings(["action": action, "id": id]) { [weak self] r in self?.send("meeting", r) }
+        case "rename": settings.meetings(["action": "rename", "id": id, "title": b["title"] as? String ?? ""]) { [weak self] r in self?.send("meeting", r); self?.list("") }
+        case "delete": settings.meetings(["action": "delete", "id": id]) { [weak self] r in if r["deleted"] != nil { self?.send("deleted", id) } }
+        case "ask":
+            settings.meetings(["action": "ask", "id": id, "question": b["question"] as? String ?? "", "history": b["history"] ?? []]) { [weak self] r in self?.send("answer", r) }
+        case "copy": NSPasteboard.general.clearContents(); NSPasteboard.general.setString(b["text"] as? String ?? "", forType: .string)
+        case "export":
+            settings.meetings(["action": "export", "id": id]) { [weak self] r in
+                guard let markdown = r["markdown"] as? String else { self?.send("notice", "Esportazione non riuscita."); return }
+                let chooser = NSSavePanel(); chooser.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+                chooser.nameFieldStringValue = ((r["meeting"] as? [String: Any])?["title"] as? String ?? "Riunione").replacingOccurrences(of: "/", with: "-") + ".md"
+                chooser.begin { response in
+                    guard response == .OK, let url = chooser.url else { return }
+                    do { try MeetingArchive.export(markdown, to: url); self?.send("notice", "Esportato in Markdown.") }
+                    catch { self?.send("notice", "Esportazione non riuscita. Prova un'altra cartella.") }
+                }
+            }
+        case "live": if Prefs.bool("meeting") { meeting.open() }
+        default: break
+        }
+    }
+}
+
 final class TitleBar: NSView {
     override func mouseDown(with e: NSEvent) {
         guard e.clickCount == 2 else { window?.performDrag(with: e); return }
@@ -6245,6 +6313,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
                 let data = output.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
                 let result = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
                 DispatchQueue.main.async { [weak self] in
+                    meetingLibrary.refreshIfOpen(id)
                     guard let self, finishing === p else { return }; finishing = nil
                     guard archive.id == self.archive?.id, !running else { return }
                     if let m = result["meeting"] as? [String: Any] { js("recap", m) }
@@ -6680,7 +6749,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
             } else if voice { voice = false; voiceText = ""; voicePartial = ""; voiceTail = Date().addingTimeInterval(1.5) }
         case "pause": stop(paused: true)
         case "resume": start(brief)
-        case "meetings": settings.open(tab: "meetings")
+        case "meetings": meetingLibrary.open(archive?.id)
         case "delete": discard()
         case "save":
             guard !running else { return }; discard()
@@ -8419,6 +8488,7 @@ let pasteHotkey = (code: 9, mods: controlKey | cmdKey, flags: NSEvent.ModifierFl
 let pasteHotkeyRegistered = !hotkeysConflict(pasteHotkey, hotkey()) && (Prefs.str("dictateHotkeyLabel").isEmpty || !hotkeysConflict(pasteHotkey, dictateHotkey())) &&
     RegisterEventHotKey(UInt32(pasteHotkey.code), UInt32(pasteHotkey.mods), EventHotKeyID(signature: 0x41545443, id: 7), GetApplicationEventTarget(), 0, &pasteRef) == noErr
 let settings = SettingsWindow()
+let meetingLibrary = MeetingLibrary()
 let bar = MenuBar()
 let delegate = Delegate()
 NSApplication.shared.delegate = delegate
